@@ -106,7 +106,6 @@ jobs:
 
           collect_one "$RUNNER_TEMP/sdk-apk-base" "lanspeedd-${code_version}.apk"
           collect_one "$RUNNER_TEMP/sdk-apk-base" "luci-app-lanspeed-${code_version}.apk"
-          collect_one "$RUNNER_TEMP/sdk-apk-base" "luci-i18n-lanspeed-zh-cn-${code_version}.apk"
 
           if [ ! -s "$file_list" ]; then
             printf '%s\n' "error: no release files were collected" >&2
