@@ -13,6 +13,12 @@ env:
   APK_SDK_URL: https://downloads.immortalwrt.org/releases/25.12.0-rc2/targets/qualcommax/ipq60xx/immortalwrt-sdk-25.12.0-rc2-qualcommax-ipq60xx_gcc-14.3.0_musl.Linux-x86_64.tar.zst
   APK_SDK_SHA256: "" 
 
+  # --- 以下变量为了兼容 ./tests/run.sh 中的 validate-build-sdk.sh 校验 ---
+  # 挂载一个有效的 23.05 SDK 链接和虚拟哈希，防止子脚本检测变量为空或下载失败
+  IPK_SDK_URL: https://downloads.immortalwrt.org/releases/23.05.6/targets/ipq807x/generic/immortalwrt-sdk-23.05.6-ipq807x-generic_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+  IPK_SDK_SHA256: ""
+  IPK_BASE_FEED_REF: 5804844cf812c07b2d66d513bec2e36e7a8270ee
+
 jobs:
   unit:
     runs-on: ubuntu-24.04
