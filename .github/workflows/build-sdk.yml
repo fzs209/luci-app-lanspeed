@@ -4,12 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch: # 添加手动触发支持
 
 permissions:
   contents: read
 
 env:
-  # 替换为 qualcommax/ipq60xx 架构的 ImmortalWrt 25.12.0-rc2 SDK
   APK_SDK_URL: https://downloads.immortalwrt.org/releases/25.12.0-rc2/targets/qualcommax/ipq60xx/immortalwrt-sdk-25.12.0-rc2-qualcommax-ipq60xx_gcc-14.3.0_musl.Linux-x86_64.tar.zst
 
 jobs:
@@ -29,7 +29,8 @@ jobs:
 
   release:
     needs: unit
-    if: startsWith(github.ref, 'refs/tags/')
+    # 修改这里的判断：如果是推标签（refs/tags/）或者手动触发（workflow_dispatch），都允许运行
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -42,7 +43,10 @@ jobs:
         run: |
           code_version="$(sh ./scripts/release-version.sh)"
           expected_tag="v${code_version}"
-          if [ "${GITHUB_REF_NAME}" != "$expected_tag" ]; then
+          
+          # 如果是推标签触发，依然严格校验版本号是否一致
+          # 如果是手动触发，则跳过强校验，直接使用脚本读取到的 code_version 作为后续打包的名称
+          if [ "${{ github.event_name }}" = "push" ] && [ "${GITHUB_REF_NAME}" != "$expected_tag" ]; then
             printf '%s\n' "error: release tag ${GITHUB_REF_NAME} does not match code version ${code_version}" >&2
             exit 1
           fi
@@ -57,10 +61,6 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/sdk-apk-base"
           curl -L "$APK_SDK_URL" -o "$RUNNER_TEMP/sdk-apk-base/sdk.tar.zst"
-          
-          # 移除了 SHA256 校验，因为更换了 SDK URL。如果需要可以自行添加验证逻辑
-          # printf '%s  %s\n' "$APK_SDK_SHA256" "$RUNNER_TEMP/sdk-apk-base/sdk.tar.zst" | sha256sum -c -
-          
           tar --zstd -xf "$RUNNER_TEMP/sdk-apk-base/sdk.tar.zst" -C "$RUNNER_TEMP/sdk-apk-base" --strip-components=1
 
       - name: Build SDK packages
@@ -81,7 +81,6 @@ jobs:
           }
 
           : > "$RUNNER_TEMP/build-pids.txt"
-          # 只编译 apk-base，禁用 bpf (enable_bpf=0)
           run_build apk-base "$RUNNER_TEMP/sdk-apk-base" 0 25.12
 
           status=0
@@ -122,10 +121,8 @@ jobs:
             fi
           }
 
-          # 仅收集 apk，不收集 bpf 和 ipk
           collect_one "$RUNNER_TEMP/sdk-apk-base" "lanspeedd-${code_version}.apk"
           collect_one "$RUNNER_TEMP/sdk-apk-base" "luci-app-lanspeed-${code_version}.apk"
-          # 收集中文语言包 (前提是你的插件源码里包含标准的 po/zh_Hans 或者 po/zh-cn 目录，OpenWrt 编译时会自动生成该包)
           collect_one "$RUNNER_TEMP/sdk-apk-base" "luci-i18n-lanspeed-zh-cn-${code_version}.apk"
 
           if [ ! -s "$file_list" ]; then
@@ -142,6 +139,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # 仅当发布目标存在时尝试清理，防止手动选择普通分支运行时由于 tag 不存在而导致 gh 报错
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
               [ -n "$asset" ] || continue
@@ -153,7 +151,8 @@ jobs:
         uses: softprops/action-gh-release@v2.6.2
         with:
           name: ${{ steps.meta.outputs.code_version }}
-          tag_name: ${{ github.ref_name }}
+          # 手动触发时如果对应的不是 tag，则自动使用 code_version 作为发布 Release 的标签名
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.meta.outputs.code_version) }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           overwrite_files: true
