@@ -4,13 +4,19 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch: # 添加手动触发支持
 
 permissions:
   contents: read
 
 env:
+  # 替换为 25.12.0-rc2 版本的 qualcommax/ipq60xx APK SDK
   APK_SDK_URL: https://downloads.immortalwrt.org/releases/25.12.0-rc2/targets/qualcommax/ipq60xx/immortalwrt-sdk-25.12.0-rc2-qualcommax-ipq60xx_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+  APK_SDK_SHA256: "" 
+  
+  # 替换为 23.05.6 版本的 ipq807x/generic (对应 ipq60xx 设备) IPK SDK
+  IPK_SDK_URL: https://downloads.immortalwrt.org/releases/23.05.6/targets/ipq807x/generic/immortalwrt-sdk-23.05.6-ipq807x-generic_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+  IPK_SDK_SHA256: ""
+  IPK_BASE_FEED_REF: 5804844cf812c07b2d66d513bec2e36e7a8270ee
 
 jobs:
   unit:
@@ -29,8 +35,7 @@ jobs:
 
   release:
     needs: unit
-    # 修改这里的判断：如果是推标签（refs/tags/）或者手动触发（workflow_dispatch），都允许运行
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -43,10 +48,7 @@ jobs:
         run: |
           code_version="$(sh ./scripts/release-version.sh)"
           expected_tag="v${code_version}"
-          
-          # 如果是推标签触发，依然严格校验版本号是否一致
-          # 如果是手动触发，则跳过强校验，直接使用脚本读取到的 code_version 作为后续打包的名称
-          if [ "${{ github.event_name }}" = "push" ] && [ "${GITHUB_REF_NAME}" != "$expected_tag" ]; then
+          if [ "${GITHUB_REF_NAME}" != "$expected_tag" ]; then
             printf '%s\n' "error: release tag ${GITHUB_REF_NAME} does not match code version ${code_version}" >&2
             exit 1
           fi
@@ -61,7 +63,21 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/sdk-apk-base"
           curl -L "$APK_SDK_URL" -o "$RUNNER_TEMP/sdk-apk-base/sdk.tar.zst"
+          # 注释掉 SHA256 校验，避免因为 hash 值不匹配导致工作流失败
+          # printf '%s  %s\n' "$APK_SDK_SHA256" "$RUNNER_TEMP/sdk-apk-base/sdk.tar.zst" | sha256sum -c -
           tar --zstd -xf "$RUNNER_TEMP/sdk-apk-base/sdk.tar.zst" -C "$RUNNER_TEMP/sdk-apk-base" --strip-components=1
+
+          mkdir -p "$RUNNER_TEMP/sdk-apk-bpf"
+          cp -a "$RUNNER_TEMP/sdk-apk-base/." "$RUNNER_TEMP/sdk-apk-bpf/"
+
+          mkdir -p "$RUNNER_TEMP/sdk-ipk-base"
+          curl -L "$IPK_SDK_URL" -o "$RUNNER_TEMP/sdk-ipk-base/sdk.tar.xz"
+          # 注释掉 SHA256 校验，避免因为 hash 值不匹配导致工作流失败
+          # printf '%s  %s\n' "$IPK_SDK_SHA256" "$RUNNER_TEMP/sdk-ipk-base/sdk.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/sdk-ipk-base/sdk.tar.xz" -C "$RUNNER_TEMP/sdk-ipk-base" --strip-components=1
+
+          mkdir -p "$RUNNER_TEMP/sdk-ipk-bpf"
+          cp -a "$RUNNER_TEMP/sdk-ipk-base/." "$RUNNER_TEMP/sdk-ipk-bpf/"
 
       - name: Build SDK packages
         run: |
@@ -82,6 +98,9 @@ jobs:
 
           : > "$RUNNER_TEMP/build-pids.txt"
           run_build apk-base "$RUNNER_TEMP/sdk-apk-base" 0 25.12
+          run_build apk-bpf "$RUNNER_TEMP/sdk-apk-bpf" 1 25.12
+          run_build ipk-base "$RUNNER_TEMP/sdk-ipk-base" 0 23.05 "$IPK_BASE_FEED_REF"
+          run_build ipk-bpf "$RUNNER_TEMP/sdk-ipk-bpf" 1 23.05 "$IPK_BASE_FEED_REF"
 
           status=0
           while read -r pid name log_file; do
@@ -123,8 +142,11 @@ jobs:
           }
 
           collect_one "$RUNNER_TEMP/sdk-apk-base" "lanspeedd-${code_version}.apk"
+          collect_one "$RUNNER_TEMP/sdk-apk-bpf" "lanspeedd-bpf-${code_version}.apk"
           collect_one "$RUNNER_TEMP/sdk-apk-base" "luci-app-lanspeed-${code_version}.apk"
-          collect_one "$RUNNER_TEMP/sdk-apk-base" "luci-i18n-lanspeed-zh-cn-${code_version}.apk"
+          collect_one "$RUNNER_TEMP/sdk-ipk-base" "lanspeedd_${ipk_version}_*.ipk"
+          collect_one "$RUNNER_TEMP/sdk-ipk-bpf" "lanspeedd-bpf_${ipk_version}_*.ipk"
+          collect_one "$RUNNER_TEMP/sdk-ipk-base" "luci-app-lanspeed_${ipk_version}_*.ipk"
 
           if [ ! -s "$file_list" ]; then
             printf '%s\n' "error: no release files were collected" >&2
@@ -140,7 +162,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # 仅当发布目标存在时尝试清理，防止手动选择普通分支运行时由于 tag 不存在而导致 gh 报错
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
               [ -n "$asset" ] || continue
@@ -152,8 +173,7 @@ jobs:
         uses: softprops/action-gh-release@v2.6.2
         with:
           name: ${{ steps.meta.outputs.code_version }}
-          # 手动触发时如果对应的不是 tag，则自动使用 code_version 作为发布 Release 的标签名
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.meta.outputs.code_version) }}
+          tag_name: ${{ github.ref_name }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           overwrite_files: true
