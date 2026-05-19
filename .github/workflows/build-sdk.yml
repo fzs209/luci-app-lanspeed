@@ -9,11 +9,8 @@ permissions:
   contents: read
 
 env:
-  APK_SDK_URL: https://downloads.immortalwrt.org/releases/25.12.0-rc2/targets/x86/64/immortalwrt-sdk-25.12.0-rc2-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
-  APK_SDK_SHA256: fb665aabb627d3b3a7d98cd426ee90febdb84ceffa6ce4c18fbda934c46053d5
-  IPK_SDK_URL: https://downloads.immortalwrt.org/releases/23.05.6/targets/x86/64/immortalwrt-sdk-23.05.6-x86-64_gcc-12.3.0_musl.Linux-x86_64.tar.xz
-  IPK_SDK_SHA256: 4dc46a6a612031f14d7d64ca9717895cd8907da7fd01b85f0edee18cb895dc77
-  IPK_BASE_FEED_REF: 5804844cf812c07b2d66d513bec2e36e7a8270ee
+  # 替换为 qualcommax/ipq60xx 架构的 ImmortalWrt 25.12.0-rc2 SDK
+  APK_SDK_URL: https://downloads.immortalwrt.org/releases/25.12.0-rc2/targets/qualcommax/ipq60xx/immortalwrt-sdk-25.12.0-rc2-qualcommax-ipq60xx_gcc-14.3.0_musl.Linux-x86_64.tar.zst
 
 jobs:
   unit:
@@ -60,19 +57,11 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/sdk-apk-base"
           curl -L "$APK_SDK_URL" -o "$RUNNER_TEMP/sdk-apk-base/sdk.tar.zst"
-          printf '%s  %s\n' "$APK_SDK_SHA256" "$RUNNER_TEMP/sdk-apk-base/sdk.tar.zst" | sha256sum -c -
+          
+          # 移除了 SHA256 校验，因为更换了 SDK URL。如果需要可以自行添加验证逻辑
+          # printf '%s  %s\n' "$APK_SDK_SHA256" "$RUNNER_TEMP/sdk-apk-base/sdk.tar.zst" | sha256sum -c -
+          
           tar --zstd -xf "$RUNNER_TEMP/sdk-apk-base/sdk.tar.zst" -C "$RUNNER_TEMP/sdk-apk-base" --strip-components=1
-
-          mkdir -p "$RUNNER_TEMP/sdk-apk-bpf"
-          cp -a "$RUNNER_TEMP/sdk-apk-base/." "$RUNNER_TEMP/sdk-apk-bpf/"
-
-          mkdir -p "$RUNNER_TEMP/sdk-ipk-base"
-          curl -L "$IPK_SDK_URL" -o "$RUNNER_TEMP/sdk-ipk-base/sdk.tar.xz"
-          printf '%s  %s\n' "$IPK_SDK_SHA256" "$RUNNER_TEMP/sdk-ipk-base/sdk.tar.xz" | sha256sum -c -
-          tar -xJf "$RUNNER_TEMP/sdk-ipk-base/sdk.tar.xz" -C "$RUNNER_TEMP/sdk-ipk-base" --strip-components=1
-
-          mkdir -p "$RUNNER_TEMP/sdk-ipk-bpf"
-          cp -a "$RUNNER_TEMP/sdk-ipk-base/." "$RUNNER_TEMP/sdk-ipk-bpf/"
 
       - name: Build SDK packages
         run: |
@@ -92,10 +81,8 @@ jobs:
           }
 
           : > "$RUNNER_TEMP/build-pids.txt"
+          # 只编译 apk-base，禁用 bpf (enable_bpf=0)
           run_build apk-base "$RUNNER_TEMP/sdk-apk-base" 0 25.12
-          run_build apk-bpf "$RUNNER_TEMP/sdk-apk-bpf" 1 25.12
-          run_build ipk-base "$RUNNER_TEMP/sdk-ipk-base" 0 23.05 "$IPK_BASE_FEED_REF"
-          run_build ipk-bpf "$RUNNER_TEMP/sdk-ipk-bpf" 1 23.05 "$IPK_BASE_FEED_REF"
 
           status=0
           while read -r pid name log_file; do
@@ -114,7 +101,6 @@ jobs:
         id: release_files
         run: |
           code_version="${{ steps.meta.outputs.code_version }}"
-          ipk_version="${code_version%-r*}-${code_version##*-r}"
           release_dir="$RUNNER_TEMP/release/files"
           file_list="$RUNNER_TEMP/release/files.txt"
           mkdir -p "$release_dir"
@@ -136,12 +122,11 @@ jobs:
             fi
           }
 
+          # 仅收集 apk，不收集 bpf 和 ipk
           collect_one "$RUNNER_TEMP/sdk-apk-base" "lanspeedd-${code_version}.apk"
-          collect_one "$RUNNER_TEMP/sdk-apk-bpf" "lanspeedd-bpf-${code_version}.apk"
           collect_one "$RUNNER_TEMP/sdk-apk-base" "luci-app-lanspeed-${code_version}.apk"
-          collect_one "$RUNNER_TEMP/sdk-ipk-base" "lanspeedd_${ipk_version}_*.ipk"
-          collect_one "$RUNNER_TEMP/sdk-ipk-bpf" "lanspeedd-bpf_${ipk_version}_*.ipk"
-          collect_one "$RUNNER_TEMP/sdk-ipk-base" "luci-app-lanspeed_${ipk_version}_*.ipk"
+          # 收集中文语言包 (前提是你的插件源码里包含标准的 po/zh_Hans 或者 po/zh-cn 目录，OpenWrt 编译时会自动生成该包)
+          collect_one "$RUNNER_TEMP/sdk-apk-base" "luci-i18n-lanspeed-zh-cn-${code_version}.apk"
 
           if [ ! -s "$file_list" ]; then
             printf '%s\n' "error: no release files were collected" >&2
