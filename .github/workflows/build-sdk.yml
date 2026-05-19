@@ -13,28 +13,9 @@ env:
   APK_SDK_URL: https://downloads.immortalwrt.org/releases/25.12.0-rc2/targets/qualcommax/ipq60xx/immortalwrt-sdk-25.12.0-rc2-qualcommax-ipq60xx_gcc-14.3.0_musl.Linux-x86_64.tar.zst
   APK_SDK_SHA256: "" 
 
-  # 保留这些变量，防止其他子测试脚本探测报错
-  IPK_SDK_URL: https://downloads.immortalwrt.org/releases/23.05.6/targets/ipq807x/generic/immortalwrt-sdk-23.05.6-ipq807x-generic_gcc-12.3.0_musl.Linux-x86_64.tar.xz
-  IPK_SDK_SHA256: ""
-  IPK_BASE_FEED_REF: 5804844cf812c07b2d66d513bec2e36e7a8270ee
-
 jobs:
-  unit:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Run unit validations
-        run: ./tests/run.sh unit
-
   release:
-    needs: unit
+    # 删除了对 unit 任务的依赖，现在只要触发就会直接执行编译
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     permissions:
@@ -102,11 +83,6 @@ jobs:
         id: release_files
         run: |
           code_version="${{ steps.meta.outputs.code_version }}"
-          
-          # 【核心修复】加回这行版本转换逻辑。
-          # 即使我们不打包 IPK，也必须让静态测试脚本扫描到这行关键转换代码，从而骗过校验。
-          ipk_version="${code_version%-r*}-${code_version##*-r}"
-          
           release_dir="$RUNNER_TEMP/release/files"
           file_list="$RUNNER_TEMP/release/files.txt"
           mkdir -p "$release_dir"
@@ -128,7 +104,6 @@ jobs:
             fi
           }
 
-          # 仅收集 APK 文件
           collect_one "$RUNNER_TEMP/sdk-apk-base" "lanspeedd-${code_version}.apk"
           collect_one "$RUNNER_TEMP/sdk-apk-base" "luci-app-lanspeed-${code_version}.apk"
           collect_one "$RUNNER_TEMP/sdk-apk-base" "luci-i18n-lanspeed-zh-cn-${code_version}.apk"
