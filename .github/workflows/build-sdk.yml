@@ -100,6 +100,7 @@ jobs:
         id: release_files
         run: |
           code_version="${{ steps.meta.outputs.code_version }}"
+          ipk_version="${code_version%-r*}-${code_version##*-r}"
           release_dir="$RUNNER_TEMP/release/files"
           file_list="$RUNNER_TEMP/release/files.txt"
           mkdir -p "$release_dir"
