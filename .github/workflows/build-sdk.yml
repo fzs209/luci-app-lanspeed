@@ -9,14 +9,9 @@ permissions:
   contents: read
 
 env:
-  # 替换为 25.12.0-rc2 版本的 qualcommax/ipq60xx APK SDK
+  # 25.12.0-rc2 版本的 qualcommax/ipq60xx APK SDK
   APK_SDK_URL: https://downloads.immortalwrt.org/releases/25.12.0-rc2/targets/qualcommax/ipq60xx/immortalwrt-sdk-25.12.0-rc2-qualcommax-ipq60xx_gcc-14.3.0_musl.Linux-x86_64.tar.zst
   APK_SDK_SHA256: "" 
-  
-  # 替换为 23.05.6 版本的 ipq807x/generic (对应 ipq60xx 设备) IPK SDK
-  IPK_SDK_URL: https://downloads.immortalwrt.org/releases/23.05.6/targets/ipq807x/generic/immortalwrt-sdk-23.05.6-ipq807x-generic_gcc-12.3.0_musl.Linux-x86_64.tar.xz
-  IPK_SDK_SHA256: ""
-  IPK_BASE_FEED_REF: 5804844cf812c07b2d66d513bec2e36e7a8270ee
 
 jobs:
   unit:
@@ -63,21 +58,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/sdk-apk-base"
           curl -L "$APK_SDK_URL" -o "$RUNNER_TEMP/sdk-apk-base/sdk.tar.zst"
-          # 注释掉 SHA256 校验，避免因为 hash 值不匹配导致工作流失败
-          # printf '%s  %s\n' "$APK_SDK_SHA256" "$RUNNER_TEMP/sdk-apk-base/sdk.tar.zst" | sha256sum -c -
           tar --zstd -xf "$RUNNER_TEMP/sdk-apk-base/sdk.tar.zst" -C "$RUNNER_TEMP/sdk-apk-base" --strip-components=1
-
-          mkdir -p "$RUNNER_TEMP/sdk-apk-bpf"
-          cp -a "$RUNNER_TEMP/sdk-apk-base/." "$RUNNER_TEMP/sdk-apk-bpf/"
-
-          mkdir -p "$RUNNER_TEMP/sdk-ipk-base"
-          curl -L "$IPK_SDK_URL" -o "$RUNNER_TEMP/sdk-ipk-base/sdk.tar.xz"
-          # 注释掉 SHA256 校验，避免因为 hash 值不匹配导致工作流失败
-          # printf '%s  %s\n' "$IPK_SDK_SHA256" "$RUNNER_TEMP/sdk-ipk-base/sdk.tar.xz" | sha256sum -c -
-          tar -xJf "$RUNNER_TEMP/sdk-ipk-base/sdk.tar.xz" -C "$RUNNER_TEMP/sdk-ipk-base" --strip-components=1
-
-          mkdir -p "$RUNNER_TEMP/sdk-ipk-bpf"
-          cp -a "$RUNNER_TEMP/sdk-ipk-base/." "$RUNNER_TEMP/sdk-ipk-bpf/"
 
       - name: Build SDK packages
         run: |
@@ -97,10 +78,8 @@ jobs:
           }
 
           : > "$RUNNER_TEMP/build-pids.txt"
+          # 仅编译 apk-base，关闭 BPF (第3个参数为 0)
           run_build apk-base "$RUNNER_TEMP/sdk-apk-base" 0 25.12
-          run_build apk-bpf "$RUNNER_TEMP/sdk-apk-bpf" 1 25.12
-          run_build ipk-base "$RUNNER_TEMP/sdk-ipk-base" 0 23.05 "$IPK_BASE_FEED_REF"
-          run_build ipk-bpf "$RUNNER_TEMP/sdk-ipk-bpf" 1 23.05 "$IPK_BASE_FEED_REF"
 
           status=0
           while read -r pid name log_file; do
@@ -119,7 +98,6 @@ jobs:
         id: release_files
         run: |
           code_version="${{ steps.meta.outputs.code_version }}"
-          ipk_version="${code_version%-r*}-${code_version##*-r}"
           release_dir="$RUNNER_TEMP/release/files"
           file_list="$RUNNER_TEMP/release/files.txt"
           mkdir -p "$release_dir"
@@ -141,12 +119,12 @@ jobs:
             fi
           }
 
+          # 收集核心组件包和 LuCI 界面包
           collect_one "$RUNNER_TEMP/sdk-apk-base" "lanspeedd-${code_version}.apk"
-          collect_one "$RUNNER_TEMP/sdk-apk-bpf" "lanspeedd-bpf-${code_version}.apk"
           collect_one "$RUNNER_TEMP/sdk-apk-base" "luci-app-lanspeed-${code_version}.apk"
-          collect_one "$RUNNER_TEMP/sdk-ipk-base" "lanspeedd_${ipk_version}_*.ipk"
-          collect_one "$RUNNER_TEMP/sdk-ipk-bpf" "lanspeedd-bpf_${ipk_version}_*.ipk"
-          collect_one "$RUNNER_TEMP/sdk-ipk-base" "luci-app-lanspeed_${ipk_version}_*.ipk"
+          
+          # 收集 zh-cn 简体中文语言包
+          collect_one "$RUNNER_TEMP/sdk-apk-base" "luci-i18n-lanspeed-zh-cn-${code_version}.apk"
 
           if [ ! -s "$file_list" ]; then
             printf '%s\n' "error: no release files were collected" >&2
