@@ -7,6 +7,17 @@ on:
         description: 'Release Tag Name (e.g., v1.0.0)'
         required: true
         type: string
+      # ====================== 新增输入项：指定提交哈希 ======================
+      commit_sha:
+        description: 'Commit SHA to build (可选，留空则编译当前最新提交)'
+        required: false
+        type: string
+      # ====================== 新增输入项：跳过版本校验 ======================
+      skip_version_check:
+        description: 'Skip tag/code version check (强制编译任意提交，选true)'
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,9 +35,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # ====================== 核心修改：拉取指定提交 ======================
+          ref: ${{ inputs.commit_sha || github.sha }}  # 填了commit就用指定提交，否则用默认
+          fetch-depth: 0  # 拉取完整提交历史（必须加，否则无法切换旧提交）
 
+      # ====================== 优化版本校验：支持跳过 ======================
       - name: Verify tag matches code version
         id: meta
+        if: ${{ inputs.skip_version_check == false }}  # 勾选跳过则不执行此步骤
         env:
           INPUT_TAG_NAME: ${{ inputs.tag_name }}
         run: |
